@@ -31,7 +31,7 @@ class LoginAudit < ActiveRecord::Base
 
   belongs_to :user
 
-  attr_accessible :user, :ip_address, :success, :login, :api, :url, :method
+  attr_accessible :user, :ip_address, :success, :login, :api, :url, :method, :user_agent
 
   API_FORMAT = 'json'
 
@@ -57,8 +57,8 @@ class LoginAudit < ActiveRecord::Base
           :login => login,
           :api => api,
           :url => request.fullpath,
-          :method => request.request_method
-
+          :method => request.request_method,
+          :user_agent => request.env['HTTP_USER_AGENT']
       )
       Rails.logger.info "LoginAudit: Saved login audit for User:'#{login}', id: #{id}, Login succeed: #{success}"
     rescue Exception => e

@@ -34,6 +34,7 @@ en:
   label_la_api: API
   label_la_url: URL
   label_la_method: Method
+  label_la_user_agent: User Agent
   label_la_logging_settings: Log
   help_la_logging_settings: Select what to audit
   label_la_audit_api: Audit API
