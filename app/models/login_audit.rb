@@ -22,8 +22,8 @@
 # IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
+require 'resolv'
 class LoginAudit < ActiveRecord::Base
-  unloadable
 
   #validates :user_id, :presence => true
 
@@ -31,7 +31,7 @@ class LoginAudit < ActiveRecord::Base
 
   belongs_to :user
 
-  attr_accessible :user, :ip_address, :success, :login, :api, :url, :method, :user_agent, :server_ip
+  attr_accessible :user, :ip_address, :success, :login, :api, :url, :method, :user_agent, :server_ip, :dns_lookup
 
   API_FORMAT = 'json'
 
@@ -44,26 +44,34 @@ class LoginAudit < ActiveRecord::Base
   end
 
   def self.log(user, success, request, params)
-    login = user.nil? ? (params.nil? ? 'Unknown' : params['username']) : user.login
-    id = user.nil? ? 'N/A' : user.id
-    api = request.format === API_FORMAT
-    # Setting.plugin_redmine_login_audit['audit_api']
-    begin
-      LoginAudit.create!(
-          :user => user,
-          :ip_address => request.remote_ip,
-          :success => success,
-          #:client => request.media_type,
-          :login => login,
-          :api => api,
-          :url => request.fullpath,
-          :method => request.request_method,
-          :user_agent => request.env['HTTP_USER_AGENT'],
-          :server_ip => Socket.ip_address_list.detect(&:ipv4_private?).try(:ip_address)
-      )
-      Rails.logger.info "LoginAudit: Saved login audit for User:'#{login}', id: #{id}, Login succeed: #{success}"
-    rescue Exception => e
-      Rails.logger.error "LoginAudit: Failed to save login audit for User:'#{login}', id: #{id}, Login succeed: #{success}, Error: #{e.message}"
+    Thread.start do
+      login = user.nil? ? (params.nil? ? 'Unknown' : params['username']) : user.login
+      id = user.nil? ? 'N/A' : user.id
+      api = request.format === API_FORMAT
+
+      dns_lookup = ""
+      begin
+        dns_lookup = Resolv.getname(request.remote_ip)
+      rescue Resolv::ResolvError => e
+      end
+      # Setting.plugin_redmine_login_audit['audit_api']
+      begin
+        LoginAudit.create!(
+            :user => user,
+            :ip_address => request.remote_ip,
+            :success => success,
+            :login => login,
+            :dns_lookup => dns_lookup,
+            :api => api,
+            :url => request.fullpath,
+            :method => request.request_method,
+            :user_agent => request.env['HTTP_USER_AGENT'],
+            :server_ip => Socket.ip_address_list.detect(&:ipv4_private?).try(:ip_address)
+        )
+        Rails.logger.info "LoginAudit: Saved login audit for User:'#{login}', id: #{id}, Login succeed: #{success}"
+      rescue Exception => e
+        Rails.logger.error "LoginAudit: Failed to save login audit for User:'#{login}', id: #{id}, Login succeed: #{success}, Error: #{e.message}"
+      end
     end
   end
 
@@ -73,6 +81,20 @@ class LoginAudit < ActiveRecord::Base
 
   def self.log_failure?
     LoggingSetting.log_failure_status.include?(Setting.plugin_redmine_login_audit['log_setting'].to_i)
+  end
+
+  def self.update_hostnames
+    ip_addresses_to_lookup = LoginAudit.where(dns_lookup: [nil, ""]).distinct(:ip_address).pluck(:ip_address)
+    
+    ip_addresses_to_lookup.each do |ip|
+      begin
+        dns_lookup = Resolv.getname(ip)
+        LoginAudit.where(ip_address: ip).update_all(dns_lookup: dns_lookup)
+        Rails.logger.info "Resolved: #{ip} to: #{dns_lookup}"
+      rescue Resolv::ResolvError => e
+        Rails.logger.info "Could not resolve: #{ip}"
+      end
+    end
   end
 
   def send_notification
